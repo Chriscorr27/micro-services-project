@@ -1,0 +1,266 @@
+version: '4'
+
+services:
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    restart: always
+    networks:
+      - backend
+    ports:
+      - "9411:9411"
+  mongodb:
+    image: mongo:6.0
+    container_name: mongodb
+    restart: always
+    networks:
+      - backend
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: Chris
+      MONGO_INITDB_DATABASE: product_db
+    volumes:
+      - mongo_data:/data/db
+  mysqldb:
+    image: mysql:8.0
+    container_name: mysqldb
+    restart: always
+    networks:
+      - backend
+    environment:
+      MYSQL_ROOT_PASSWORD: Chris
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3316:3306"
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    hostname: zookeeper
+    container_name: zookeeper
+    networks:
+      - backend
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    container_name: kafka
+    networks:
+      - backend
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT, OUTSIDE:PLAINTEXT
+      KAFKA_LISTENERS: INSIDE://kafka:29092, OUTSIDE://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:29092, OUTSIDE://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    networks:
+      - backend
+    ports:
+      - "8086:8080"
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_NAME: local
+      KAFKA_CLUSTERS_BOOTSTRAPSERVERS: kafka:29092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+
+  discovery-server:
+    container_name: discovery-server
+    image: chris2708/discovery-server
+    networks:
+      - backend
+    ports:
+      - "8761:8761"
+    environment:
+      SPRING_SECURITY_USER_NAME: root
+      SPRING_SECURITY_USER_PASSWORD: Chris
+
+
+  auth-service:
+    container_name: auth-service
+    image: chris2708/auth-service
+    networks:
+      - backend
+    depends_on:
+      - mysqldb
+      - zipkin
+      - api-gateway
+      - discovery-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysqldb:3306/auth_db
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: Chris
+      SPRING_DATASOURCE_DRIVER-CLASS-NAME: com.mysql.cj.jdbc.Driver
+
+  product-service:
+    container_name: product-service
+    image: chris2708/product-service
+    networks:
+      - backend
+    depends_on:
+      - mongodb
+      - zipkin
+      - api-gateway
+      - discovery-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
+      AUTH_SERVICE_URI: http://auth-service
+      SPRING_DATA_MONGODB_URI: mongodb://root:Chris@mongodb:27017/product?authSource=admin
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+
+  inventory-service:
+    container_name: inventory-service
+    image: chris2708/inventory-service
+    networks:
+      - backend
+    depends_on:
+      - mysqldb
+      - zipkin
+      - api-gateway
+      - discovery-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysqldb:3306/inventory_db
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: Chris
+      SPRING_DATASOURCE_DRIVER-CLASS-NAME: com.mysql.cj.jdbc.Driver
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+
+  order-service:
+    container_name: order-service
+    image: chris2708/order-service
+    networks:
+      - backend
+    depends_on:
+      - mysqldb
+      - zipkin
+      - kafka
+      - api-gateway
+      - discovery-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysqldb:3306/order_db
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: Chris
+      SPRING_DATASOURCE_DRIVER-CLASS-NAME: com.mysql.cj.jdbc.Driver
+      AUTH_SERVICE_URI: http://auth-service
+      PRODUCT_SERVICE_URI: http://product-service
+      INVENTORY_SERVICE_URI: http://inventory-service
+      SPRING_KAFKA_BOOTSTRAP-SERVERS: kafka:29092
+      SPRING_KAFKA_TEMPLATE_DEFAULT-TOPIC: orders
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+
+  notification-service:
+    container_name: notification-service
+    image: chris2708/notification-service
+    networks:
+      - backend
+    depends_on:
+      - kafka
+      - zipkin
+      - api-gateway
+      - discovery-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
+      ORDER_SERVICE_URI: http://order-service
+      SPRING_KAFKA_BOOTSTRAP-SERVERS: kafka:29092
+      SPRING_KAFKA_CONSUMER_GROUP-ID: notification-service
+      SPRING_MAIL_HOST: "sandbox.smtp.mailtrap.io"
+      SPRING_MAIL_PORT: 2525
+      SPRING_MAIL_USERNAME: 07a1791d58346c
+      SPRING_MAIL_PASSWORD: 0f7aafe4976ca2
+      SPRING_MAIL_PROTOCOL: smtp
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+
+
+  api-gateway:
+    container_name: api-gateway
+    image:  chris2708/api-gateway:latest
+    ports:
+      - "8080:8080"
+    depends_on:
+      - zipkin
+      - discovery-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
+      AUTH_SERVICE_URI: http://auth-service
+      PRODUCT_SERVICE_URI: http://product-service
+      INVENTORY_SERVICE_URI: http://inventory-service
+      ORDER_SERVICE_URI: http://order-service
+    networks:
+      - backend
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - auth-service
+      - product-service
+      - inventory-service
+      - order-service
+      - notification-service
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    links:
+      - prometheus:prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=root
+      - GF_SECURITY_ADMIN_PASSWORD=Chris
+    networks:
+      - backend
+    volumes:
+      - grafana-storage:/var/lib/grafana
+
+volumes:
+  mongo_data:
+  mysql_data:
+  grafana-storage:
+
+networks:
+  backend:
+    driver: bridge

@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: chris2708/order-service
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: docker
+            - name: SERVER_PORT
+              value: "8080"
+            - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+              value: http://zipkin:9411/api/v2/spans
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:mysql://mysqldb:3306/order_db
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: my-secret
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: my-secret
+                  key: password
+            - name: SPRING_DATASOURCE_DRIVER-CLASS-NAME
+              value: com.mysql.cj.jdbc.Driver
+            - name: AUTH_SERVICE_URI
+              value: http://auth-service
+            - name: PRODUCT_SERVICE_URI
+              value: http://product-service
+            - name: INVENTORY_SERVICE_URI
+              value: http://inventory-service
+            - name: SPRING_KAFKA_BOOTSTRAP-SERVERS
+              value: kafka-service:29092
+            - name: SPRING_KAFKA_TEMPLATE_DEFAULT-TOPIC
+              value: orders
+            - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+              value: http://discovery-server:8761/eureka/
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - port: 8080
+      targetPort: 8080

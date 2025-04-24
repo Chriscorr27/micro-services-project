@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      containers:
+        - name: notification-service
+          image: chris2708/notification-service
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: docker
+            - name: SERVER_PORT
+              value: "8080"
+            - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+              value: http://zipkin:9411/api/v2/spans
+            - name: ORDER_SERVICE_URI
+              value: http://order-service
+            - name: SPRING_KAFKA_BOOTSTRAP-SERVERS
+              value: kafka-service:29092
+            - name: SPRING_KAFKA_CONSUMER_GROUP-ID
+              value: notification-service
+            - name: SPRING_MAIL_HOST
+              value: sandbox.smtp.mailtrap.io
+            - name: SPRING_MAIL_PORT
+              value: "2525"
+            - name: SPRING_MAIL_USERNAME
+              value: '07a1791d58346c'
+            - name: SPRING_MAIL_PASSWORD
+              value: '0f7aafe4976ca2'
+            - name: SPRING_MAIL_PROTOCOL
+              value: smtp
+            - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+              value: http://discovery-server:8761/eureka/
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+spec:
+  selector:
+    app: notification-service
+  ports:
+    - port: 8080
+      targetPort: 8080
